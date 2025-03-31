@@ -6,6 +6,9 @@
 (def height 500)
 
 ;; Energy
+
+(def uncluster? true)
+
 (def starting-power 500000000000) ;; pJ
 (def e-b 50000) ;; power required to transmit or receive 1 bit (pJ)
 (def e-amp 100) ;; power required to transmit 1 bit to the required distance (pJ)
@@ -32,7 +35,7 @@
   {:x x, :y y
    :type :cluster-member
    :g 0
-   :energy (rand starting-power)
+   :energy starting-power
    :colour [(rand 255) (rand 255) (rand 255)]}) ;; random colour
 
 (defn is-type? [node type]
@@ -50,8 +53,8 @@
       :cluster-not    (q/triangle (/ node-size -2) 0, 0 node-size, (/ node-size  2) 0))
     (q/with-fill [0 0 0] ;; draw battery percent
       (q/text (format "%.0f%%" (* (float (/ (:energy node) starting-power)) 100))
-              (int (/ node-size -2)) (int (/ node-size -2))
-              (int (/ node-size  2)) (int (/ node-size  2))))))
+              (int (/ node-size -2)) (int (/ node-size  2))
+              (int (/ node-size  2)) (int (/ node-size -2))))))
 
 (defn distance-between-nodes [node-a node-b]
   (let [delta (fn [key] (apply #(Math/pow (- %1 %2) 2) (map key [node-a node-b])))
@@ -71,6 +74,7 @@
         cluster-members (filter #(is-type? % :cluster-member) nodes)
         cluster-nots    (filter #(is-type? % :cluster-not   ) nodes)]
     {:cluster-nots cluster-nots
+     :cluster-orphans (if (empty? cluster-heads) cluster-members []) ;; edge case where no one is elected
      :clusters (map (fn [ch] {:cluster-head ch
                               :cluster-members (find-cluster-members nodes ch)}) cluster-heads)}))
 
@@ -200,35 +204,48 @@
   {:cluster-head    (spend-energy cluster-head #(cluster-head-energy-spent sink cluster-members %))
    :cluster-members (map (fn [cluster-member] (spend-energy cluster-member #(cluster-member-energy-spent cluster-head %))) cluster-members)})
 
+;; reset g if its time (this keeps the distribution of cluster heads even)
+(defn do-update-g [state]
+  (let [reset-ch? (zero? (mod (:round state) G))] ;; is it time to reset cluster heads?
+        (update state :nodes (fn [nodes] (map #(update % :g (fn [g] (if reset-ch? 0 g))) nodes))))) 
+
+;; have nodes decide whether or not to elect themselves
+(defn do-elections [state]
+  (update state :nodes (fn [nodes] (map #(do-election % (:round state)) nodes)))) 
+  
+;; have nodes uncluster
+(defn do-not-clusters [state]
+  (if uncluster?
+    (update state :nodes (fn [nodes] (map #(do-not-cluster nodes (:sink state) %) nodes))) ;; nodes that a close enough to sink shouldnt cluster
+    state)) ;; we don't want to unclusteqr
+  
+
+;; remove energy based on work done by node
 (defn do-energy-calculation [state]
   (let [sink (:sink state)
-        {:keys [cluster-nots clusters]} (cluster-network (:nodes state))
+        {:keys [cluster-nots cluster-orphans clusters]} (cluster-network (:nodes state))
         cluster-nots* (map (fn [node] (spend-energy node #(cluster-not-energy-spent sink %))) cluster-nots)
         clusters*     (map (fn [cluster] (do-cluster-energy-calculation sink cluster)) clusters)
         nodes*        (concat cluster-nots*
+                              cluster-orphans
                               (map :cluster-head clusters*)
                               (apply concat (map :cluster-members clusters*)))]
     (assoc state :nodes nodes*)))
 
-;;(defn do-energy-calcuation [state]
-;;  (let [sink (:sink state)
-;;        {:keys [cluster-nots clusters]} (cluster-network (:nodes state))
-;;        spend-energy (fn [node cost-fn] (update node :energy #(- % (cost-fn node))))
-;;        cluster-nots* (map (fn [node] (spend-energy node #(cluster-not-energy-spent sink %))) cluster-nots)
-;;        clusters*     (map (fn [{:keys cluster-head cluster-members}]
-;;                             {:cluster-head (spend-energy cluster-head #(cluster-head-energy-spent sink cluster-members %))
-;;                              :cluster-members (map (fn [] (spend-energy %) cluster-members)}) clusters)
-;;    (update state :nodes (concat cluster-nots* cluster-heads* cluster-members*))))
-  
+;; remove nodes that have less than zero energy
+(defn do-remove-dead-nodes [state]
+  (update state :nodes (fn [nodes] (filter #(> (:energy %) 0) nodes))))
+
 (defn do-round [state]
   (let [round (:round state)
         reset-ch? (zero? (mod round G))] ;; is it time to reset cluster heads?
     (-> state
         (update :round inc)
-        (update :nodes (fn [nodes] (map #(update % :g (fn [g] (if reset-ch? 0 g))) nodes))) ;; reset g if its time (this keeps the distribution of cluster heads even)
-        (update :nodes (fn [nodes] (map #(do-election % round) nodes))) ;; have nodes decide whether or not to elect themselves
-        (update :nodes (fn [nodes] (map #(do-not-cluster nodes (:sink state) %) nodes))) ;; nodes that a close enough to sink shouldnt cluster
+        (do-update-g)
+        (do-elections)
+        (do-not-clusters)
         (do-energy-calculation)
+        (do-remove-dead-nodes)
         (update :nodes vec)))) ;; keep nodes as vec
 
 (def initial-state
