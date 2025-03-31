@@ -98,8 +98,8 @@
         (apply max (map #(Math/abs %) [(- x x-min) (- y y-min) (- x x-max) (- y y-max)])))) ;; find what direction it has to broadcast the farthest in
 
 (defn cluster-broadcast-range [cluster cluster-head]
-  (let [xs (map :x cluster)
-        ys (map :y cluster)]
+  (let [xs (map :x (conj cluster cluster-head))
+        ys (map :y (conj cluster cluster-head))]
     (required-broadcast-distance cluster-head [(apply min xs) (apply max xs)] [(apply min ys) (apply max ys)])))
 
 (defn send-message-to-node [node-start node-end message-size]
@@ -130,11 +130,10 @@
 
 
 (defn cluster-head-energy-spent [sink cluster cluster-head]
-  (apply +
-         (nominate-cluster-head-message cluster-head) ;; nominate self
-         (broadcast-tdma-schedule-message cluster cluster-head) ;; broadcast tdma schedule to all members
-         (listen-for-cluster-member-messages) ;; list for cluster member data
-         (send-data-to-sink-message sink cluster-head))) ;; finally send data to sink 
+  (+ (nominate-cluster-head-message cluster-head) ;; nominate self
+     (broadcast-tdma-schedule-message cluster cluster-head) ;; broadcast tdma schedule to all members
+     (listen-for-cluster-member-messages) ;; list for cluster member data
+     (send-data-to-sink-message sink cluster-head))) ;; finally send data to sink 
 
 ;; Cluster Member Messages
 
@@ -152,16 +151,14 @@
     (send-message-to-node cluster-member cluster-head message-size)))
 
 (defn cluster-member-energy-spent [cluster-head cluster-member]
-  (apply +
-         (listen-for-cluster-head-nomination-message) ;; list for advertisment messages
-         (declare-cluster-membership-message cluster-member cluster-head)
-         (send-data-to-cluster-head-message cluster-member cluster-head)))
+  (+ (listen-for-cluster-head-nomination-message) ;; list for advertisment messages
+     (declare-cluster-membership-message cluster-member cluster-head)
+     (send-data-to-cluster-head-message cluster-member cluster-head)))
 
 ;; Cluster Not Messages
 (defn cluster-not-energy-spent [sink cluster-not]
-  (apply +
-         (listen-for-cluster-head-nomination-message)
-         (send-data-to-sink-message sink cluster-not)))
+  (+ (listen-for-cluster-head-nomination-message)
+     (send-data-to-sink-message sink cluster-not)))
 
 
 ;; Election
@@ -196,13 +193,31 @@
     (assoc node :type :cluster-not)
     node))
 
+(defn spend-energy [node cost-fn]
+  (update node :energy #(- % (cost-fn node))))
+
+(defn do-cluster-energy-calculation [sink {:keys [cluster-head cluster-members]}]
+  {:cluster-head    (spend-energy cluster-head #(cluster-head-energy-spent sink cluster-members %))
+   :cluster-members (map (fn [cluster-member] (spend-energy cluster-member #(cluster-member-energy-spent cluster-head %))) cluster-members)})
+
+(defn do-energy-calculation [state]
+  (let [sink (:sink state)
+        {:keys [cluster-nots clusters]} (cluster-network (:nodes state))
+        cluster-nots* (map (fn [node] (spend-energy node #(cluster-not-energy-spent sink %))) cluster-nots)
+        clusters*     (map (fn [cluster] (do-cluster-energy-calculation sink cluster)) clusters)
+        nodes*        (concat cluster-nots*
+                              (map :cluster-head clusters*)
+                              (apply concat (map :cluster-members clusters*)))]
+    (assoc state :nodes nodes*)))
+
 ;;(defn do-energy-calcuation [state]
 ;;  (let [sink (:sink state)
 ;;        {:keys [cluster-nots clusters]} (cluster-network (:nodes state))
 ;;        spend-energy (fn [node cost-fn] (update node :energy #(- % (cost-fn node))))
-;;        cluster-nots* (map (fn [node] (spend-energy #(cluster-not-energy-spent sink %) node)) cluster-nots)
+;;        cluster-nots* (map (fn [node] (spend-energy node #(cluster-not-energy-spent sink %))) cluster-nots)
 ;;        clusters*     (map (fn [{:keys cluster-head cluster-members}]
-;;                                (cluster-head-energy-spent sink cluster-members %) cluster-head) clusters)
+;;                             {:cluster-head (spend-energy cluster-head #(cluster-head-energy-spent sink cluster-members %))
+;;                              :cluster-members (map (fn [] (spend-energy %) cluster-members)}) clusters)
 ;;    (update state :nodes (concat cluster-nots* cluster-heads* cluster-members*))))
   
 (defn do-round [state]
@@ -213,6 +228,7 @@
         (update :nodes (fn [nodes] (map #(update % :g (fn [g] (if reset-ch? 0 g))) nodes))) ;; reset g if its time (this keeps the distribution of cluster heads even)
         (update :nodes (fn [nodes] (map #(do-election % round) nodes))) ;; have nodes decide whether or not to elect themselves
         (update :nodes (fn [nodes] (map #(do-not-cluster nodes (:sink state) %) nodes))) ;; nodes that a close enough to sink shouldnt cluster
+        (do-energy-calculation)
         (update :nodes vec)))) ;; keep nodes as vec
 
 (def initial-state
