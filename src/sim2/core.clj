@@ -7,7 +7,7 @@
 
 ;; Energy
 
-(def uncluster? true)
+(def uncluster? false)
 
 (def starting-power 500000000000) ;; pJ
 (def e-b 50000) ;; power required to transmit or receive 1 bit (pJ)
@@ -255,17 +255,17 @@
     :nodes (create-random-nodes 100)})
 
 (defn setup []
-  (q/frame-rate 30)
+  (q/frame-rate 5)
   (q/color-mode :rgb)
   (do-round initial-state))
 
 (defn update-state [state]
-  state)
+  (do-round state))
 
-(defn key-pressed [state event]
-  (if (= (:key event) :space)
-    (do-round state)
-    state))
+(defn key-pressed [state event])
+;;  (if (= (:key event) :space)
+;;    (do-round state)
+;;    state))
 
 (defn draw-state [state]
   (q/background 240)
@@ -275,7 +275,9 @@
       (q/with-fill (get-node-colour (:nodes state) node)
         (draw-node node))))
   ;; Draw Sink
-  (draw-sink (:sink state)))
+  (draw-sink (:sink state))
+  (q/with-fill [0 0 0]
+    (q/text (str "Round " (:round state)) (get-in state [:sink :x]) (get-in state [:sink :y]))))
 
 (q/defsketch sim2
   :title "sim"
