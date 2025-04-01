@@ -18,12 +18,9 @@
 
 ;; Energy
 
-;;(def uncluster? true)
-
 (def starting-power 500000000000) ;; pJ
 (def e-b 50000) ;; power required to transmit or receive 1 bit (pJ)
 (def e-amp 100) ;; power required to transmit 1 bit to the required distance (pJ)
-(def packet-size 2000) ;; size of a message (bits)
 
 (defn transmission-energy [number-of-bits distance]
   (+ (* e-b number-of-bits) (* e-amp number-of-bits (* distance distance))))
@@ -258,16 +255,19 @@
   (update state :nodes (fn [nodes] (filter #(> (:energy %) 0) nodes))))
 
 (defn do-round [state]
-  (let [round (:round state)
-        reset-ch? (zero? (mod round G))] ;; is it time to reset cluster heads?
-    (-> state
-        (update :round inc)
-        (do-update-g)
-        (do-elections)
-        (do-not-clusters)
-        (do-energy-calculation)
-        (do-remove-dead-nodes)
-        (update :nodes vec)))) ;; keep nodes as vec
+  (-> state
+      (update :round inc)
+      (do-update-g)
+      (do-elections)
+      (do-not-clusters)
+      (do-energy-calculation)
+      (do-remove-dead-nodes)
+      (update :nodes vec))) ;; keep nodes as vec
+
+(defn network-lifetime [begining-state]
+  (loop [state begining-state]
+    (if (empty? (:nodes state)) (:round state)
+        (recur (do-round state)))))
 
 (def initial-state
   {:round 0
