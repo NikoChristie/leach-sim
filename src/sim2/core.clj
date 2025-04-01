@@ -58,12 +58,12 @@
 
 (defn draw-node [node]
   (do 
-    (case (:type node)
+    (case (:type node) ;; draw shape according to class
       :cluster-member (q/ellipse 0 0 node-size node-size)
       :cluster-head   (q/rect    (/ node-size -2) (/ node-size -2) node-size node-size)
-      :cluster-not    (q/triangle (/ node-size -2) 0, 0 node-size, (/ node-size  2) 0))
+      :cluster-not    (q/triangle (/ node-size -2) (/ node-size 2), 0 (/ node-size -2), (/ node-size  2) (/ node-size 2)))
     (q/with-fill [0 0 0] ;; draw battery percent
-      (q/text (format "%.0f%%" (* (float (/ (:energy node) starting-power)) 100))
+      (q/text (format " %.0f%%" (* (float (/ (:energy node) starting-power)) 100))
               (int (/ node-size -2)) 0)))) 
 
 (defn distance-between-nodes [node-a node-b]
