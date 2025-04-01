@@ -1,13 +1,15 @@
 (ns sim2.core
-  (:require [quil.core :as q]
+  (:require [clojure.math :as math]
+            [quil.core :as q]
             [quil.middleware :as m]))
 
-(def width 500)
-(def height 500)
+(def size 500) ;; gotta be a square
+(def width  size) 
+(def height size) 
 
 ;; Energy
 
-(def uncluster? false)
+(def uncluster? true)
 
 (def starting-power 500000000000) ;; pJ
 (def e-b 50000) ;; power required to transmit or receive 1 bit (pJ)
@@ -24,10 +26,19 @@
 
 (def node-size 25)
 (def sink-size (* node-size 2))
-(def sink-colour [0 255 0])
+(def sink-colour (coordinate-colour (/ width 2) (/ height 2)))
 
 (def P 0.05)    ;; desired percentage of cluster heads
 (def G (/ 1 P)) ;; amount of time a node will wait before becoming the cluster head again
+
+(defn coordinate-colour [x y]
+  (let [[center-x center-y] [(/ width 2) (/ height 2)]
+        ang (+ (math/atan2 (- y center-y) (- x center-x)) math/PI)
+        mag (Math/sqrt (+  (Math/pow (- x center-x) 2) (Math/pow (- y center-y) 2)))
+        h (/ ang (* math/PI 2))
+        s (/ mag (/ size 2))
+        v 1.0]
+    (map #(* 255 %) [h s v])))
 
 ;; Node
 
@@ -36,7 +47,7 @@
    :type :cluster-member
    :g 0
    :energy starting-power
-   :colour [(rand 255) (rand 255) (rand 255)]}) ;; random colour
+   :colour (coordinate-colour x y)})
 
 (defn is-type? [node type]
   (= (:type node) type))
@@ -49,12 +60,11 @@
   (do 
     (case (:type node)
       :cluster-member (q/ellipse 0 0 node-size node-size)
-      :cluster-head   (q/rect    0 0 node-size node-size)
+      :cluster-head   (q/rect    (/ node-size -2) (/ node-size -2) node-size node-size)
       :cluster-not    (q/triangle (/ node-size -2) 0, 0 node-size, (/ node-size  2) 0))
     (q/with-fill [0 0 0] ;; draw battery percent
       (q/text (format "%.0f%%" (* (float (/ (:energy node) starting-power)) 100))
-              (int (/ node-size -2)) (int (/ node-size  2))
-              (int (/ node-size  2)) (int (/ node-size -2))))))
+              (int (/ node-size -2)) 0)))) 
 
 (defn distance-between-nodes [node-a node-b]
   (let [delta (fn [key] (apply #(Math/pow (- %1 %2) 2) (map key [node-a node-b])))
@@ -81,11 +91,21 @@
 (defn get-node-colour [nodes node]
   (case (:type node)
     :cluster-head   (:colour node)
-    :cluster-member (:colour (find-cluster-head nodes node))
+    :cluster-member (or (:colour (find-cluster-head nodes node)) [0 0 255])
     :cluster-not    sink-colour))
+
+;;(defn get-node-colour [nodes node]
+;;  (:colour node))
 
 (defn create-random-nodes [n]
   (repeatedly n #(new-node (rand width) (rand height))))
+
+(defn create-circle-nodes [n radius]
+  (for [i (range n)]
+    (let [angle (* 2 (Math/PI) (/ i n))
+          x     (+ (/ width  2) (* radius (Math/cos angle)))
+          y     (+ (/ height 2) (* radius (Math/sin angle)))]
+      (new-node x y))))
 
 ;; Messages (How much energy each message costs to send)
 
@@ -252,11 +272,14 @@
   {:round 0
     :sink {:x (- (/ width  2) (/ sink-size 2))
            :y (- (/ height 2) (/ sink-size 2))}
-    :nodes (create-random-nodes 100)})
+   :nodes (concat (create-circle-nodes 45 (* width 0.45))
+                  (create-circle-nodes 30 (* width 0.30))
+                  (create-circle-nodes 15 (* width 0.15)))})
+    ;;:nodes (create-random-nodes 100)})
 
 (defn setup []
-  (q/frame-rate 5)
-  (q/color-mode :rgb)
+  (q/frame-rate 3)
+  (q/color-mode :hsb)
   (do-round initial-state))
 
 (defn update-state [state]
