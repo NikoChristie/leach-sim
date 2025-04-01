@@ -7,9 +7,18 @@
 (def width  size) 
 (def height size) 
 
+(defn coordinate-colour [x y]
+  (let [[center-x center-y] [(/ width 2) (/ height 2)]
+        ang (+ (math/atan2 (- y center-y) (- x center-x)) math/PI)
+        mag (Math/sqrt (+  (Math/pow (- x center-x) 2) (Math/pow (- y center-y) 2)))
+        h (/ ang (* math/PI 2))
+        s (/ mag (/ size 2))
+        v 1.0]
+    (map #(* 255 %) [h s v])))
+
 ;; Energy
 
-(def uncluster? true)
+;;(def uncluster? true)
 
 (def starting-power 500000000000) ;; pJ
 (def e-b 50000) ;; power required to transmit or receive 1 bit (pJ)
@@ -31,14 +40,6 @@
 (def P 0.05)    ;; desired percentage of cluster heads
 (def G (/ 1 P)) ;; amount of time a node will wait before becoming the cluster head again
 
-(defn coordinate-colour [x y]
-  (let [[center-x center-y] [(/ width 2) (/ height 2)]
-        ang (+ (math/atan2 (- y center-y) (- x center-x)) math/PI)
-        mag (Math/sqrt (+  (Math/pow (- x center-x) 2) (Math/pow (- y center-y) 2)))
-        h (/ ang (* math/PI 2))
-        s (/ mag (/ size 2))
-        v 1.0]
-    (map #(* 255 %) [h s v])))
 
 ;; Node
 
@@ -113,8 +114,8 @@
 (def data-size 2000) ;; bits for data collected
 
 (def round-length 60) ;; new round every 60s
-(def cluster-head-listen-time (- round-length advertisment-phase-length)) ;; Cluster head listens always except when its advertising
 (def advertisment-phase-length (* round-length 0.10)) ;; 10% of round is for advertisment
+(def cluster-head-listen-time (- round-length advertisment-phase-length)) ;; Cluster head listens always except when its advertising
 
 ;; How far do we have to broadcast a message?
 (defn required-broadcast-distance [node [x-min x-max] [y-min y-max]]
@@ -235,7 +236,7 @@
   
 ;; have nodes uncluster
 (defn do-not-clusters [state]
-  (if uncluster?
+  (if (:uncluster? state)
     (update state :nodes (fn [nodes] (map #(do-not-cluster nodes (:sink state) %) nodes))) ;; nodes that a close enough to sink shouldnt cluster
     state)) ;; we don't want to unclusteqr
   
@@ -270,6 +271,7 @@
 
 (def initial-state
   {:round 0
+   :uncluster? false
     :sink {:x (- (/ width  2) (/ sink-size 2))
            :y (- (/ height 2) (/ sink-size 2))}
    :nodes (concat (create-circle-nodes 45 (* width 0.45))
@@ -285,7 +287,9 @@
 (defn update-state [state]
   (do-round state))
 
-(defn key-pressed [state event])
+(defn key-pressed [state event]
+  (if (= (:key event) :c)
+    (update state :uncluster? not)))
 ;;  (if (= (:key event) :space)
 ;;    (do-round state)
 ;;    state))
