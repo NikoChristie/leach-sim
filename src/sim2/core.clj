@@ -301,6 +301,31 @@
     (if (empty? (:nodes state)) (select-keys state [:round :messages-sent])
         (recur (do-round state)))))
 
+(defn mean [xs]
+  (float (/ (reduce + xs) (count xs))))
+
+(defn std [xs]
+  (let [mean (mean xs)
+        sqd  (map #(math/pow (- % mean) 2) xs)
+        var  (/ (reduce + sqd) (count xs))]
+    (math/sqrt var)))
+
+(defn network-stats [runs]
+  (let [rounds   (map :round runs)
+        messages (map :messages-sent runs)]
+    {:rounds-mean   (mean rounds)
+     :rounds-std    (std  rounds)
+     :messages-mean (mean messages)
+     :messages-std  (std  messages)}))
+
+
+(defn to-cluster-or-not-cluster [state n]
+  (let [run-experiment #(pmap network-lifetime (repeat n %))
+        to-cluster      (run-experiment (assoc state :uncluster? false))
+        no-cluster      (run-experiment (assoc state :uncluster? true ))]
+    {:to-cluster (network-stats to-cluster)
+     :no-cluster (network-stats no-cluster)}))
+
 (def initial-state
   {:round 0
    :messages-sent 0
@@ -313,7 +338,7 @@
 ;;  :nodes (create-random-nodes 100)})
 
 (defn setup []
-  (q/frame-rate 10)
+  (q/frame-rate 7)
   (q/color-mode :hsb)
   (do-round initial-state))
 
@@ -322,10 +347,8 @@
 
 (defn key-pressed [state event]
   (if (= (:key event) :c)
-    (update state :uncluster? not)))
-;;  (if (= (:key event) :space)
-;;    (do-round state)
-;;    state))
+    (update state :uncluster? not)
+    state))
 
 (defn draw-state [state]
   (q/background 240)
@@ -341,7 +364,6 @@
       (do
         (q/text (str "R " (:round state)) 0 15)
         (q/text (str "N " (:messages-sent state)) 0 30)))))
-    ;;(q/text (str "Round " (:round state)) (get-in state [:sink :x]) (get-in state [:sink :y]))))
 
 (q/defsketch sim2
   :title "sim"
