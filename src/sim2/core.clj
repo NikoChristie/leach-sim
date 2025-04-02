@@ -62,7 +62,9 @@
       :cluster-not    (q/triangle (/ node-size -2) (/ node-size 2), 0 (/ node-size -2), (/ node-size  2) (/ node-size 2)))
     (q/with-fill [0 0 0] ;; draw battery percent
       (q/text (format " %.0f%%" (* (float (/ (:energy node) starting-power)) 100))
-              (int (/ node-size -2)) 0)))) 
+              (int (/ node-size -2)) 0)
+      (q/text (str "G " (:g node))
+              (int (/ node-size -2)) (int (/ node-size -2)))))) 
 
 (defn distance-between-nodes [node-a node-b]
   (let [delta (fn [key] (apply #(Math/pow (- %1 %2) 2) (map key [node-a node-b])))
@@ -75,7 +77,9 @@
     (first (sort-by #(distance-between-nodes % node) cluster-heads))))
 
 (defn find-cluster-members [nodes node]
-  (filter #(= (find-cluster-head nodes %) node) (filter #(is-type? % :cluster-member) nodes)))
+  (do
+    (assert (is-type? node :cluster-head))
+    (filter #(= (find-cluster-head nodes %) node) (filter #(is-type? % :cluster-member) nodes))))
 
 (defn cluster-network [nodes]
   (let [cluster-heads   (filter #(is-type? % :cluster-head  ) nodes)
@@ -89,7 +93,7 @@
 (defn get-node-colour [nodes node]
   (case (:type node)
     :cluster-head   (:colour node)
-    :cluster-member (or (:colour (find-cluster-head nodes node)) [0 0 255])
+    :cluster-member (or (:colour (find-cluster-head nodes node)) (:colour node)) ;; [0 0 255])
     :cluster-not    sink-colour))
 
 ;;(defn get-node-colour [nodes node]
@@ -115,14 +119,23 @@
 (def cluster-head-listen-time (- round-length advertisment-phase-length)) ;; Cluster head listens always except when its advertising
 
 ;; How far do we have to broadcast a message?
+;;(defn required-broadcast-distance [node [x-min x-max] [y-min y-max]]
+;;  (let [[x y] [(:x node) (:y node)]]
+;;        (apply max (map #(Math/abs %) [(- x x-min) (- y y-min) (- x x-max) (- y y-max)])))) ;; find what direction it has to broadcast the farthest in
+
 (defn required-broadcast-distance [node [x-min x-max] [y-min y-max]]
-  (let [[x y] [(:x node) (:y node)]]
-        (apply max (map #(Math/abs %) [(- x x-min) (- y y-min) (- x x-max) (- y y-max)])))) ;; find what direction it has to broadcast the farthest in
+  (let [points [{:x x-min :y y-min}
+                {:x x-min :y y-max}
+                {:x x-max :y y-min}
+                {:x x-max :y y-max}]]
+        (apply max (map #(distance-between-nodes node %) points))))
 
 (defn cluster-broadcast-range [cluster cluster-head]
   (let [xs (map :x (conj cluster cluster-head))
         ys (map :y (conj cluster cluster-head))]
-    (required-broadcast-distance cluster-head [(apply min xs) (apply max xs)] [(apply min ys) (apply max ys)])))
+    (required-broadcast-distance cluster-head
+                                 [(apply min xs) (apply max xs)]
+                                 [(apply min ys) (apply max ys)])))
 
 (defn send-message-to-node [node-start node-end message-size]
   (transmission-energy message-size (distance-between-nodes node-start node-end)))
@@ -169,19 +182,20 @@
 
 ;; Send Data to Cluster Head
 (defn send-data-to-cluster-head-message [cluster-member cluster-head]
-  (let [message-size 32]
-    (send-message-to-node cluster-member cluster-head message-size)))
+  (send-message-to-node cluster-member cluster-head data-size))
 
 (defn cluster-member-energy-spent [cluster-head cluster-member]
   (+ (listen-for-cluster-head-nomination-message) ;; list for advertisment messages
      (declare-cluster-membership-message cluster-member cluster-head)
      (send-data-to-cluster-head-message cluster-member cluster-head)))
 
+(defn cluster-orphan-energy-spent [cluster-member] ;; special edge case when there arent any cluster heads
+  (listen-for-cluster-head-nomination-message))
+
 ;; Cluster Not Messages
 (defn cluster-not-energy-spent [sink cluster-not]
   (+ (listen-for-cluster-head-nomination-message)
      (send-data-to-sink-message sink cluster-not)))
-
 
 ;; Election
 
@@ -195,12 +209,12 @@
 (defn become-cluster-head? [node round]
   (<= (rand) (cluster-head-threshold node round))) ;; do threshold test to decide whether we're gonna be a cluster head
 
-;; FIXME: This math isnt actually true to the paper (remeber the times 2)
 (defn shouldnt-cluster? [nodes sink node]
-  (let [cluster-head  (find-cluster-head nodes node)
-        ch-distance   (if-not cluster-head 0 (distance-between-nodes node cluster-head)) ;; TODO: Remove this if its wrong
-        sink-distance (distance-between-nodes node sink)]
-    (< sink-distance ch-distance)))
+  (let [cluster-head    (find-cluster-head nodes node)
+        d-node->cluster (if cluster-head (distance-between-nodes node cluster-head) Double/POSITIVE_INFINITY)
+        d-node->sink    (distance-between-nodes node sink)]
+    (> (+ (/ e-b e-amp) (* d-node->cluster d-node->cluster))
+       (* d-node->sink d-node->sink))))
 
 (defn do-election [node round]
   (if (and (become-cluster-head? node round)
@@ -211,7 +225,7 @@
     (assoc node :type :cluster-member))) ;; 
 
 (defn do-not-cluster [nodes sink node]
-  (if (and (shouldnt-cluster? nodes sink node) (not= (:type node) :cluster-head))
+  (if (and (not (is-type? node :cluster-head)) (shouldnt-cluster? nodes sink node))
     (assoc node :type :cluster-not)
     node))
 
@@ -227,6 +241,22 @@
   (let [reset-ch? (zero? (mod (:round state) G))] ;; is it time to reset cluster heads?
         (update state :nodes (fn [nodes] (map #(update % :g (fn [g] (if reset-ch? 0 g))) nodes))))) 
 
+(defn do-count-messages-sent [state]
+  (let [{:keys [cluster-nots cluster-orphans clusters]} (cluster-network (:nodes state))
+        cluster-nots    (count cluster-nots)
+        cluster-heads   (count clusters)
+        cluster-members (apply + (map #(count (:cluster-members %)) clusters))
+        messages-sent   (+ cluster-nots cluster-heads cluster-members)]
+    (update state :messages-sent #(+ % messages-sent))))
+
+;;(defn do-count-messages-sent [state]
+;;  (let [nodes (:nodes state)
+;;        cluster-nots   (count (filter #(is-type? % :cluster-not) nodes))
+;;        cluster-heads? (some #(is-type? % :cluster-head) nodes)
+;;        clusters       (if cluster-heads? (- (count nodes) cluster-nots) 0)
+;;        messages-sent  (+ cluster-nots clusters)]
+;;  (update state :messages-sent #(+ % messages-sent))))
+
 ;; have nodes decide whether or not to elect themselves
 (defn do-elections [state]
   (update state :nodes (fn [nodes] (map #(do-election % (:round state)) nodes)))) 
@@ -235,17 +265,18 @@
 (defn do-not-clusters [state]
   (if (:uncluster? state)
     (update state :nodes (fn [nodes] (map #(do-not-cluster nodes (:sink state) %) nodes))) ;; nodes that a close enough to sink shouldnt cluster
-    state)) ;; we don't want to unclusteqr
+    state)) ;; we don't want to uncluster
   
 
 ;; remove energy based on work done by node
 (defn do-energy-calculation [state]
   (let [sink (:sink state)
         {:keys [cluster-nots cluster-orphans clusters]} (cluster-network (:nodes state))
-        cluster-nots* (map (fn [node] (spend-energy node #(cluster-not-energy-spent sink %))) cluster-nots)
-        clusters*     (map (fn [cluster] (do-cluster-energy-calculation sink cluster)) clusters)
+        cluster-nots*    (map (fn [node] (spend-energy node #(cluster-not-energy-spent sink %))) cluster-nots)
+        clusters*        (map (fn [cluster] (do-cluster-energy-calculation sink cluster)) clusters)
+        cluster-orphans* (map (fn [node] (spend-energy node #(cluster-orphan-energy-spent %))) cluster-orphans)
         nodes*        (concat cluster-nots*
-                              cluster-orphans
+                              cluster-orphans*
                               (map :cluster-head clusters*)
                               (apply concat (map :cluster-members clusters*)))]
     (assoc state :nodes nodes*)))
@@ -260,27 +291,29 @@
       (do-update-g)
       (do-elections)
       (do-not-clusters)
+      (do-count-messages-sent)
       (do-energy-calculation)
       (do-remove-dead-nodes)
       (update :nodes vec))) ;; keep nodes as vec
 
 (defn network-lifetime [begining-state]
   (loop [state begining-state]
-    (if (empty? (:nodes state)) (:round state)
+    (if (empty? (:nodes state)) (select-keys state [:round :messages-sent])
         (recur (do-round state)))))
 
 (def initial-state
   {:round 0
+   :messages-sent 0
    :uncluster? false
     :sink {:x (- (/ width  2) (/ sink-size 2))
            :y (- (/ height 2) (/ sink-size 2))}
    :nodes (concat (create-circle-nodes 45 (* width 0.45))
                   (create-circle-nodes 30 (* width 0.30))
                   (create-circle-nodes 15 (* width 0.15)))})
-    ;;:nodes (create-random-nodes 100)})
+;;  :nodes (create-random-nodes 100)})
 
 (defn setup []
-  (q/frame-rate 3)
+  (q/frame-rate 10)
   (q/color-mode :hsb)
   (do-round initial-state))
 
@@ -303,8 +336,12 @@
         (draw-node node))))
   ;; Draw Sink
   (draw-sink (:sink state))
-  (q/with-fill [0 0 0]
-    (q/text (str "Round " (:round state)) (get-in state [:sink :x]) (get-in state [:sink :y]))))
+  (q/with-translation [(get-in state [:sink :x]) (get-in state [:sink :y])]
+    (q/with-fill [0 0 0]
+      (do
+        (q/text (str "R " (:round state)) 0 15)
+        (q/text (str "N " (:messages-sent state)) 0 30)))))
+    ;;(q/text (str "Round " (:round state)) (get-in state [:sink :x]) (get-in state [:sink :y]))))
 
 (q/defsketch sim2
   :title "sim"
