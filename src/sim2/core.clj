@@ -62,9 +62,7 @@
       :cluster-not    (q/triangle (/ node-size -2) (/ node-size 2), 0 (/ node-size -2), (/ node-size  2) (/ node-size 2)))
     (q/with-fill [0 0 0] ;; draw battery percent
       (q/text (format " %.0f%%" (* (float (/ (:energy node) starting-power)) 100))
-              (int (/ node-size -2)) 0)
-      (q/text (str "G " (:g node))
-              (int (/ node-size -2)) (int (/ node-size -2)))))) 
+              (int (/ node-size -2)) 0)))) 
 
 (defn distance-between-nodes [node-a node-b]
   (let [delta (fn [key] (apply #(Math/pow (- %1 %2) 2) (map key [node-a node-b])))
@@ -333,12 +331,12 @@
     :sink {:x (- (/ width  2) (/ sink-size 2))
            :y (- (/ height 2) (/ sink-size 2))}
    :nodes (concat (create-circle-nodes 45 (* width 0.45))
-                  (create-circle-nodes 30 (* width 0.30))
-                  (create-circle-nodes 15 (* width 0.15)))})
+                (create-circle-nodes 30 (* width 0.30))
+                (create-circle-nodes 15 (* width 0.15)))})
 ;;  :nodes (create-random-nodes 100)})
 
 (defn setup []
-  (q/frame-rate 7)
+  (q/frame-rate 5)
   (q/color-mode :hsb)
   (do-round initial-state))
 
